@@ -79,12 +79,12 @@ func (d *diverge) reload() {
 	d.ipMap = ipMap
 }
 
-func decisionToStr(names []string, dec int) string {
+func (d *diverge) decisionToStr(dec int) string {
 	switch dec {
 	case noDecision:
 		return "no decision"
 	default:
-		return names[dec-upstreamX]
+		return d.names[dec-upstreamX]
 	}
 }
 
@@ -109,47 +109,54 @@ func (d *diverge) handleBy(w dns.ResponseWriter, req *dns.Msg, dec int) {
 	w.WriteMsg(res)
 }
 
-func (d *diverge) handleDivergeTypeA(w dns.ResponseWriter, req *dns.Msg) {
-	res, _, err := d.exchange(req, upstreamA)
-	if err != nil {
-		log.Println(err)
-	} else if postChk(res, d.ipMap, ipA) {
-		d.cache.set(req.Question[0].Name, upstreamA, ttl(res.Answer[0].Header().Ttl))
-		w.WriteMsg(res)
-		return
+func (d *diverge) handleDivergeTypeA(w dns.ResponseWriter, req *dns.Msg) int {
+	nErr := 0
+	for i := 1; i < len(d.upstream); i++ {
+		// 1 -> upstreamA
+		decision := i - 1 + upstreamA
+		res, _, err := d.exchange(req, decision)
+		if err != nil {
+			log.Printf("upstream %s error: %v", d.decisionToStr(decision), err)
+			nErr++
+		} else if postChk(res, d.ipMap, i-1+ipA) {
+			if w != nil {
+				w.WriteMsg(res)
+			}
+			if nErr == 0 {
+				d.cache.save(req, res, decision)
+			}
+			return decision
+		}
 	}
-	res, _, err = d.exchange(req, upstreamX)
+	res, _, err := d.exchange(req, upstreamX)
 	if err != nil {
-		log.Println(err)
-		return
+		log.Printf("upstream %s error: %v", d.decisionToStr(upstreamX), err)
+	} else {
+		if w != nil {
+			w.WriteMsg(res)
+		}
+		if nErr == 0 {
+			d.cache.save(req, res, upstreamX)
+		}
+		return upstreamX
 	}
-	d.cache.set(req.Question[0].Name, upstreamX, ttl(res.Answer[0].Header().Ttl))
-	w.WriteMsg(res)
+	return noDecision
 }
 
 func (d *diverge) handleDivergeTypeOther(w dns.ResponseWriter, req *dns.Msg) {
 	qA := new(dns.Msg)
 	qA.SetQuestion(req.Question[0].Name, dns.TypeA)
-	res, _, err := d.exchange(qA, upstreamA)
-	if err == nil && postChk(res, d.ipMap, ipA) {
-		d.cache.set(req.Question[0].Name, upstreamA, ttl(res.Answer[0].Header().Ttl))
-		res, _, err = d.exchange(req, upstreamA)
-		if err == nil {
-			w.WriteMsg(res)
-		}
-	} else {
-		res, _, err = d.exchange(req, upstreamX)
-		if err == nil {
-			d.cache.set(req.Question[0].Name, upstreamX, ttl(res.Answer[0].Header().Ttl))
-			w.WriteMsg(res)
-		}
+	decision := d.handleDivergeTypeA(nil, qA)
+	if decision == noDecision {
+		return
 	}
+	d.handleBy(w, req, decision)
 }
 
 func (d *diverge) handle(w dns.ResponseWriter, req *dns.Msg) {
 	// fmt.Printf("req: %v\n", req)
 	upstream, rcode := preChk(req, d.cache, d.blocked, d.ipMap)
-	log.Printf("\tpreChk: %s, %s\n", decisionToStr(d.names, upstream), dns.RcodeToString[rcode])
+	log.Printf("\tpreChk: %s, %s\n", d.decisionToStr(upstream), dns.RcodeToString[rcode])
 	if rcode != dns.RcodeSuccess {
 		handleWith(w, req, rcode)
 		return
@@ -184,6 +191,7 @@ func preChk(req *dns.Msg, c *cache, b *domainSet, m *ip4map.IP4Map) (upstream, r
 		log.Print("\tquery type ANY not supported\n")
 		return noDecision, dns.RcodeNotImplemented
 	case dns.TypePTR:
+		// to do: IPv6 PTR is not handled
 		ip, ok := ptrName4ToUint32(q.Name)
 		if !ok {
 			return noDecision, dns.RcodeBadName

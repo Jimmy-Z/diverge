@@ -62,6 +62,8 @@ details
 * for type `PTR` queries, the decision strategy is obvious
 * for type `A` queries, the decision strategy described in basic concept is used
 * for other types, do a type `A` query to `upstreamA` first
+* n-way diverge is handled by simply trying `A`, `B`, `C`, ... one by one, if all of them fails, then `X`
+	* plan the order and IP sets carefully
 * there is a blocked domain list for like `lan` and `home.arpa`
 * also a [special IPv4 list][iana-ipv4-special]
 
@@ -73,7 +75,7 @@ to do
 	- [ ] non-volatile
 	- [ ] diagnostic/dump, via HTTP?
 	- [ ] diagnostic/query, via CHAOS?
-- [ ] 3-way diverge
+- [*] <del>3-way</del> n-way diverge
 - [ ] fallback and retry
 - [ ] concurrent query,
 	upstreamA/B is usually very fast, sub 10ms fast,
