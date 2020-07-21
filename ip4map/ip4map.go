@@ -120,8 +120,8 @@ func (m *IP4Map) SetStr(s string, v int) {
 		log.Printf("invalid %s: %s\n", reason, s)
 	}
 	split := strings.SplitN(s, "/", 2)
-	n := IPStrToUint32(split[0])
-	if n == 0 {
+	n, ok := IPStrToUint32(split[0])
+	if !ok {
 		invalid("address")
 	}
 	l := 32
@@ -169,19 +169,27 @@ func (m *IP4Map) LoadFiles(files []string) {
 }
 
 func (m *IP4Map) GetIP(ip net.IP) int {
-	return m.Get(IPToUint32(ip))
+	u, ok := IPToUint32(ip)
+	if !ok {
+		return 0
+	}
+	return m.Get(u)
 }
 
 func (m *IP4Map) GetStr(s string) int {
-	return m.Get(IPStrToUint32(s))
-}
-
-func IPToUint32(ip net.IP) uint32 {
-	ip4 := ip.To4()
-	if ip4 == nil {
+	u, ok := IPStrToUint32(s)
+	if !ok {
 		return 0
 	}
-	return (((((uint32(ip4[0]) << 8) + uint32(ip4[1])) << 8) + uint32(ip4[2])) << 8) + uint32(ip4[3])
+	return m.Get(u)
+}
+
+func IPToUint32(ip net.IP) (uint32, bool) {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return 0, false
+	}
+	return (((((uint32(ip4[0]) << 8) + uint32(ip4[1])) << 8) + uint32(ip4[2])) << 8) + uint32(ip4[3]), true
 }
 
 func Uint32ToIP(ip uint32) *net.IP {
@@ -193,8 +201,12 @@ func Uint32ToIP(ip uint32) *net.IP {
 	}
 }
 
-func IPStrToUint32(s string) uint32 {
-	return IPToUint32(net.ParseIP(s))
+func IPStrToUint32(s string) (uint32, bool) {
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return 0, false
+	}
+	return IPToUint32(ip)
 }
 
 func Uint32ToIPStr(ip uint32) string {

@@ -3,12 +3,8 @@ package main
 import (
 	"ip4map"
 	"log"
-	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"sync"
-	"syscall"
 	"time"
 
 	"github.com/miekg/dns"
@@ -16,8 +12,8 @@ import (
 
 const (
 	noDecision = iota
+	upstreamX
 	upstreamA
-	upstreamB
 )
 
 const (
@@ -27,239 +23,170 @@ const (
 )
 
 const (
-	inAddrArpa             = "in-addr.arpa."
-	defaultDivergeCacheTTL = 72 * time.Hour
+	inAddrArpa = "in-addr.arpa."
+	rrTTLUnit  = time.Second
+	minTTL     = 24 * time.Hour
 )
 
-type domainSet map[string]struct{}
-
-func newDomainSet(domains []string) *domainSet {
-	s := &domainSet{}
-	for _, d := range domains {
-		s.append(d)
-	}
-	return s
+// part of IANA IPv4 special-purpose address registry
+var specialIPv4 = []string{
+	"0.0.0.0/8",
+	"10.0.0.0/8",
+	"100.64.0.0/10",
+	"127.0.0.0/8",
+	"169.254.0.0/16",
+	"172.16.0.0/12",
+	"192.0.0.0/24",
+	"192.0.2.0/24",
+	"192.168.0.0/16",
+	"198.18.0.0/15",
+	"198.51.100.0/24",
+	"203.0.113.0/24",
+	"240.0.0.0/4",
+	"255.255.255.255/32",
 }
 
-func (s domainSet) append(d string) {
-	s[d] = struct{}{}
+type diverge struct {
+	listen   string
+	cache    *cache
+	blocked  *domainSet
+	ipFiles  []string
+	ipMap    *ip4map.IP4Map
+	upstream [][]string
+	client   *dns.Client
 }
 
-func (s domainSet) include(d string) bool {
-	for {
-		_, in := s[d]
-		if in {
-			return true
-		}
-		dot := strings.IndexByte(d, '.')
-		if dot == len(d)-1 {
-			return false
-		}
-		d = string([]byte(d)[dot+1:])
-	}
-}
-
-// TODO: handle ttl
-type divergeCache struct {
-	m map[string]int
-	l *sync.RWMutex
-}
-
-func (dc divergeCache) set(d string, c int, ttl time.Duration) {
-	dc.l.Lock()
-	defer dc.l.Unlock()
-	dc.m[d] = c
-}
-
-func (dc divergeCache) get(d string) int {
-	dc.l.RLock()
-	defer dc.l.RUnlock()
-	return dc.m[d]
-}
-
-func main() {
-	// port blocked domainsA ipA uA uB
-	if len(os.Args) != 7 {
-		log.Fatalln("invalid parameters")
-	}
-
-	port := os.Args[1]
-
-	blocked := &domainSet{}
-	blocked.append("home.arpa.")
-	for _, d := range strings.Split(os.Args[2], ",") {
-		blocked.append(d + ".")
-	}
-
-	domainsA := &domainSet{}
-	for _, d := range strings.Split(os.Args[3], ",") {
-		domainsA.append(d + ".")
-	}
-
-	ipMap := ip4map.New(2, 24)
-	ipMap.SetStr("10.0.0.0/8", ipPrivate)
-	ipMap.SetStr("172.16.0.0/12", ipPrivate)
-	ipMap.SetStr("192.168.0.0/16", ipPrivate)
-	ipMap.LoadFile(os.Args[4], ipA)
-
-	uA := []string{}
-	for _, u := range strings.Split(os.Args[5], ",") {
-		uA = append(uA, u+":53")
-	}
-
-	uB := []string{}
-	for _, u := range strings.Split(os.Args[6], ",") {
-		uB = append(uB, u+":53")
-	}
-
-	dCache := divergeCache{map[string]int{}, &sync.RWMutex{}}
-
-	client := dns.Client{}
-
-	// TODO: fallback and retry
-	exchange := func(m *dns.Msg, addrs []string) (r *dns.Msg, rtt time.Duration, err error) {
-		return client.Exchange(m, addrs[0])
-	}
-
-	preChk := func(req *dns.Msg) (upstream, rcode int) {
-		log.Printf("Query: %v", req)
-		if len(req.Question) != 1 {
-			log.Printf("unexpected len(req.Question): %d\n", len(req.Question))
-			return noDecision, dns.RcodeRefused
-		}
-		q := req.Question[0]
-		switch q.Qtype {
-		case dns.TypeANY:
-			return noDecision, dns.RcodeNotImplemented
-		case dns.TypePTR:
-			ip, ok := ptrName4ToUint32(q.Name)
-			if !ok {
-				return noDecision, dns.RcodeBadName
-			}
-			switch ipMap.Get(ip) {
-			case ipPrivate:
-				return noDecision, dns.RcodeRefused
-			case ipA:
-				return upstreamA, dns.RcodeSuccess
-			default:
-				return upstreamB, dns.RcodeSuccess
+func newDiverge(listen string, cachePath string, blocked []string, ipFiles []string, upstream [][]string) *diverge {
+	for _, u := range upstream {
+		for i, a := range u {
+			if !strings.ContainsAny(a, ":") {
+				u[i] = a + ":53"
 			}
 		}
-		if blocked.include(q.Name) {
-			return noDecision, dns.RcodeRefused
-		}
-		if domainsA.include(q.Name) {
-			return upstreamA, dns.RcodeSuccess
-		}
-		return dCache.get(q.Name), dns.RcodeSuccess
 	}
+	if !strings.ContainsAny(listen, ":") {
+		listen = "127.0.0.1:" + listen
+	}
+	d := diverge{
+		listen,
+		newCache(cachePath),
+		newDomainSet(blocked),
+		ipFiles,
+		nil,
+		upstream,
+		&dns.Client{},
+	}
+	d.blocked.append("home.arpa.")
+	d.reload()
+	return &d
+}
 
-	handleWith := func(w dns.ResponseWriter, req *dns.Msg, rcode int) {
-		res := new(dns.Msg)
-		res.SetRcode(req, rcode)
+func (d *diverge) reload() {
+	lenSets := len(d.ipFiles)
+	var vBits int
+	switch {
+	case lenSets <= (1<<2)-2:
+		vBits = 2
+	case lenSets <= (1<<4)-2:
+		vBits = 4
+	default:
+		log.Fatal("too many IP sets:", lenSets)
+	}
+	ipMap := ip4map.New(vBits, 24)
+	for _, s := range specialIPv4 {
+		ipMap.SetStr(s, ipPrivate)
+	}
+	for i, fn := range d.ipFiles {
+		ipMap.LoadFile(fn, ipA+i)
+	}
+	d.ipMap = ipMap
+}
+
+func ttl(rrTTL uint32) time.Duration {
+	ttl := time.Duration(rrTTL) * rrTTLUnit
+	if ttl < minTTL {
+		return minTTL
+	}
+	return ttl
+}
+
+// TODO: fallback and retry
+func (d *diverge) exchange(m *dns.Msg, dec int) (r *dns.Msg, rtt time.Duration, err error) {
+	return d.client.Exchange(m, d.upstream[dec-1][0])
+}
+
+func handleWith(w dns.ResponseWriter, req *dns.Msg, rcode int) {
+	res := new(dns.Msg)
+	res.SetRcode(req, rcode)
+	w.WriteMsg(res)
+}
+
+func (d *diverge) handleBy(w dns.ResponseWriter, req *dns.Msg, dec int) {
+	res, _, err := d.exchange(req, dec)
+	if err != nil {
+		log.Printf("%v\n", err)
+		return
+	}
+	// log.Printf("Answer %v: %v\n", rtt, res)
+	w.WriteMsg(res)
+}
+
+func (d *diverge) handleDivergeTypeA(w dns.ResponseWriter, req *dns.Msg) {
+	res, _, err := d.exchange(req, upstreamA)
+	if err != nil {
+		log.Println(err)
+	} else if d.postChk(res, ipA) {
+		d.cache.set(req.Question[0].Name, upstreamA, ttl(res.Answer[0].Header().Ttl))
 		w.WriteMsg(res)
+		return
 	}
-
-	handleBy := func(w dns.ResponseWriter, req *dns.Msg, upstream []string) {
-		res, rtt, err := exchange(req, upstream)
-		if err != nil {
-			log.Printf("%v\n", err)
-			return
-		}
-		log.Printf("Answer %v: %v\n", rtt, res)
-		w.WriteMsg(res)
+	res, _, err = d.exchange(req, upstreamX)
+	if err != nil {
+		log.Println(err)
+		return
 	}
+	d.cache.set(req.Question[0].Name, upstreamX, ttl(res.Answer[0].Header().Ttl))
+	w.WriteMsg(res)
+}
 
-	postChk := func(m *dns.Msg) bool {
-		for _, rr := range m.Answer {
-			a, ok := rr.(*dns.A)
-			if !ok {
-				continue
-			}
-			if ipMap.GetIP(a.A) == ipA {
-				return true
-			}
+func (d *diverge) handleDivergeTypeOther(w dns.ResponseWriter, req *dns.Msg) {
+	qA := new(dns.Msg)
+	qA.SetQuestion(req.Question[0].Name, dns.TypeA)
+	res, _, err := d.exchange(qA, upstreamA)
+	if err == nil && d.postChk(res, ipA) {
+		d.cache.set(req.Question[0].Name, upstreamA, ttl(res.Answer[0].Header().Ttl))
+		res, _, err = d.exchange(req, upstreamA)
+		if err == nil {
+			w.WriteMsg(res)
 		}
-		return false
-	}
-
-	// TODO: async
-	handleDivergeA := func(w dns.ResponseWriter, req *dns.Msg) {
-		a, _, err := exchange(req, uA)
-		if err == nil && postChk(a) {
-			dCache.set(req.Question[0].Name, upstreamA, defaultDivergeCacheTTL)
-			w.WriteMsg(a)
-			return
-		}
-		dCache.set(req.Question[0].Name, upstreamB, defaultDivergeCacheTTL)
-		if err != nil {
-			log.Println(err)
-		}
-		a, _, err = exchange(req, uB)
-		if err != nil {
-			log.Println(err)
-			return
-		}
-		w.WriteMsg(a)
-	}
-
-	// TODO: async
-	handleDivergeOther := func(w dns.ResponseWriter, req *dns.Msg) {
-		qA := new(dns.Msg)
-		qA.SetQuestion(req.Question[0].Name, dns.TypeA)
-		a, _, err := exchange(qA, uA)
-		if err == nil && postChk(a) {
-			dCache.set(req.Question[0].Name, upstreamA, defaultDivergeCacheTTL)
-			a, _, err = exchange(req, uA)
-			if err == nil {
-				w.WriteMsg(a)
-			}
-		} else {
-			dCache.set(req.Question[0].Name, upstreamB, defaultDivergeCacheTTL)
-			a, _, err = exchange(req, uB)
-			if err == nil {
-				w.WriteMsg(a)
-			}
+	} else {
+		res, _, err = d.exchange(req, upstreamX)
+		if err == nil {
+			d.cache.set(req.Question[0].Name, upstreamX, ttl(res.Answer[0].Header().Ttl))
+			w.WriteMsg(res)
 		}
 	}
+}
 
-	handleDiverge := func(w dns.ResponseWriter, req *dns.Msg) {
-		if req.Question[0].Qtype == dns.TypeA {
-			handleDivergeA(w, req)
-		} else {
-			handleDivergeOther(w, req)
-		}
+func (d *diverge) handle(w dns.ResponseWriter, req *dns.Msg) {
+	// fmt.Printf("req: %v\n", req)
+	upstream, rcode := d.preChk(req)
+	log.Printf("\tpreChk: %d, %d\n", upstream, rcode)
+	if rcode != dns.RcodeSuccess {
+		handleWith(w, req, rcode)
+		return
 	}
-
-	handler := func(w dns.ResponseWriter, req *dns.Msg) {
-		// fmt.Printf("req: %v\n", req)
-		upstream, rcode := preChk(req)
-		log.Printf("\tpreChk: %d, %d\n", upstream, rcode)
-		if rcode != dns.RcodeSuccess {
-			handleWith(w, req, rcode)
-			return
-		}
-		switch upstream {
-		case upstreamA:
-			handleBy(w, req, uA)
-		case upstreamB:
-			handleBy(w, req, uB)
+	switch upstream {
+	case noDecision:
+		switch req.Question[0].Qtype {
+		case dns.TypeA:
+			d.handleDivergeTypeA(w, req)
 		default:
-			handleDiverge(w, req)
+			d.handleDivergeTypeOther(w, req)
 		}
+	default:
+		d.handleBy(w, req, upstream)
 	}
-
-	go func() {
-		d := &dns.Server{Addr: "127.0.0.1:" + port, Net: "udp", Handler: dns.HandlerFunc(handler)}
-		if err := d.ListenAndServe(); err != nil {
-			log.Fatalf("%v\n", err)
-		}
-	}()
-
-	sig := make(chan os.Signal)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	s := <-sig
-	log.Fatalf("Signal (%v) received, stopping\n", s)
 }
 
 func ptrName4ToUint32(p string) (uint32, bool) {
@@ -279,4 +206,55 @@ func ptrName4ToUint32(p string) (uint32, bool) {
 		ip = (ip << 8) + uint32(a)
 	}
 	return ip, true
+}
+
+func (d *diverge) preChk(req *dns.Msg) (upstream, rcode int) {
+	// log.Printf("Query: %v", req)
+	if len(req.Question) != 1 {
+		log.Printf("unexpected len(req.Question): %d\n", len(req.Question))
+		return noDecision, dns.RcodeRefused
+	}
+	q := req.Question[0]
+	log.Printf("query: %s %s %s\n", q.Name, dns.ClassToString[q.Qclass], dns.TypeToString[q.Qtype])
+	if q.Qclass != dns.ClassINET {
+		log.Printf("\tquery class not supported: %s\n", dns.ClassToString[q.Qclass])
+		return noDecision, dns.RcodeNotImplemented
+	}
+	switch q.Qtype {
+	case dns.TypeANY:
+		log.Print("\tquery type ANY not supported\n")
+		return noDecision, dns.RcodeNotImplemented
+	case dns.TypePTR:
+		ip, ok := ptrName4ToUint32(q.Name)
+		if !ok {
+			return noDecision, dns.RcodeBadName
+		}
+		ipV := d.ipMap.Get(ip)
+		switch ipV {
+		case ipPrivate:
+			return noDecision, dns.RcodeRefused
+		case ipUnknown:
+			return upstreamX, dns.RcodeSuccess
+		default:
+			return upstreamA + ipV - ipA, dns.RcodeSuccess
+		}
+	}
+	if d.blocked.includes(q.Name) {
+		return noDecision, dns.RcodeRefused
+	}
+	return d.cache.get(q.Name), dns.RcodeSuccess
+}
+
+func (d *diverge) postChk(m *dns.Msg, ipV int) bool {
+
+	for _, rr := range m.Answer {
+		a, ok := rr.(*dns.A)
+		if !ok {
+			continue
+		}
+		if d.ipMap.GetIP(a.A) == ipV {
+			return true
+		}
+	}
+	return false
 }
