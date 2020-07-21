@@ -13,7 +13,7 @@ basic concept (for 2-way diverge)
 ===
 * first query `upstreamA`
 * if answer matches `ipA`, use it
-* else query from `upstreamB` instead
+* else query from `upstreamX` instead
 
 example usage
 ===
@@ -55,13 +55,13 @@ diverge is meant to be an intermediate layer between [AdGuard Home] and public D
 * since the GUI of [AdGuard Home] is quite useful,
 but most probably they will not merge this particular feature
 * so cache is not required, or even opposed upon since it will introduce two layers of cache
-* but a diverge decision cache
+* diverge decision cache
 
 details
 ===
 * for type `PTR` queries, the decision strategy is obvious
 * for type `A` queries, the decision strategy described in basic concept is used
-* for other types, we do a type `A` query to `upstreamA` first
+* for other types, do a type `A` query to `upstreamA` first
 * there is a blocked domain list for like `lan` and `home.arpa`
 * also a [special IPv4 list][iana-ipv4-special]
 

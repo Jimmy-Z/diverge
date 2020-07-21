@@ -18,7 +18,7 @@ func TestDomainSet(t *testing.T) {
 		{"example.acom.", false},
 		{"example.net.uk.", false},
 	} {
-		r := ds.include(e.d)
+		r := ds.includes(e.d)
 		if r != e.r {
 			t.Errorf("ds.include(\"%s\") = %v, expecting %v", e.d, r, e.r)
 		}
@@ -26,7 +26,7 @@ func TestDomainSet(t *testing.T) {
 }
 
 func TestIPConv(t *testing.T) {
-	a := ip4map.IPStrToUint32("192.168.1.1")
+	a, _ := ip4map.IPStrToUint32("192.168.1.1")
 	b, ok := ptrName4ToUint32("1.1.168.192.in-addr.arpa.")
 	if !ok {
 		t.Error("unexpected conversion error")

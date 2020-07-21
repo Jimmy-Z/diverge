@@ -3,7 +3,6 @@ package main
 import (
 	"ip4map"
 	"log"
-	"strconv"
 	"strings"
 	"time"
 
@@ -22,41 +21,18 @@ const (
 	ipA
 )
 
-const (
-	inAddrArpa = "in-addr.arpa."
-	rrTTLUnit  = time.Second
-	minTTL     = 24 * time.Hour
-)
-
-// part of IANA IPv4 special-purpose address registry
-var specialIPv4 = []string{
-	"0.0.0.0/8",
-	"10.0.0.0/8",
-	"100.64.0.0/10",
-	"127.0.0.0/8",
-	"169.254.0.0/16",
-	"172.16.0.0/12",
-	"192.0.0.0/24",
-	"192.0.2.0/24",
-	"192.168.0.0/16",
-	"198.18.0.0/15",
-	"198.51.100.0/24",
-	"203.0.113.0/24",
-	"240.0.0.0/4",
-	"255.255.255.255/32",
-}
-
 type diverge struct {
 	listen   string
 	cache    *cache
 	blocked  *domainSet
+	names    []string
+	upstream [][]string
 	ipFiles  []string
 	ipMap    *ip4map.IP4Map
-	upstream [][]string
 	client   *dns.Client
 }
 
-func newDiverge(listen string, cachePath string, blocked []string, ipFiles []string, upstream [][]string) *diverge {
+func newDiverge(listen, cachePath string, blocked, names []string, upstream [][]string, ipFiles []string) *diverge {
 	for _, u := range upstream {
 		for i, a := range u {
 			if !strings.ContainsAny(a, ":") {
@@ -71,12 +47,13 @@ func newDiverge(listen string, cachePath string, blocked []string, ipFiles []str
 		listen,
 		newCache(cachePath),
 		newDomainSet(blocked),
+		names,
+		upstream,
 		ipFiles,
 		nil,
-		upstream,
 		&dns.Client{},
 	}
-	d.blocked.append("home.arpa.")
+	d.blocked.append(homeARPA)
 	d.reload()
 	return &d
 }
@@ -102,17 +79,18 @@ func (d *diverge) reload() {
 	d.ipMap = ipMap
 }
 
-func ttl(rrTTL uint32) time.Duration {
-	ttl := time.Duration(rrTTL) * rrTTLUnit
-	if ttl < minTTL {
-		return minTTL
+func decisionToStr(names []string, dec int) string {
+	switch dec {
+	case noDecision:
+		return "no decision"
+	default:
+		return names[dec-upstreamX]
 	}
-	return ttl
 }
 
 // TODO: fallback and retry
 func (d *diverge) exchange(m *dns.Msg, dec int) (r *dns.Msg, rtt time.Duration, err error) {
-	return d.client.Exchange(m, d.upstream[dec-1][0])
+	return d.client.Exchange(m, d.upstream[dec-upstreamX][0])
 }
 
 func handleWith(w dns.ResponseWriter, req *dns.Msg, rcode int) {
@@ -135,7 +113,7 @@ func (d *diverge) handleDivergeTypeA(w dns.ResponseWriter, req *dns.Msg) {
 	res, _, err := d.exchange(req, upstreamA)
 	if err != nil {
 		log.Println(err)
-	} else if d.postChk(res, ipA) {
+	} else if postChk(res, d.ipMap, ipA) {
 		d.cache.set(req.Question[0].Name, upstreamA, ttl(res.Answer[0].Header().Ttl))
 		w.WriteMsg(res)
 		return
@@ -153,7 +131,7 @@ func (d *diverge) handleDivergeTypeOther(w dns.ResponseWriter, req *dns.Msg) {
 	qA := new(dns.Msg)
 	qA.SetQuestion(req.Question[0].Name, dns.TypeA)
 	res, _, err := d.exchange(qA, upstreamA)
-	if err == nil && d.postChk(res, ipA) {
+	if err == nil && postChk(res, d.ipMap, ipA) {
 		d.cache.set(req.Question[0].Name, upstreamA, ttl(res.Answer[0].Header().Ttl))
 		res, _, err = d.exchange(req, upstreamA)
 		if err == nil {
@@ -170,8 +148,8 @@ func (d *diverge) handleDivergeTypeOther(w dns.ResponseWriter, req *dns.Msg) {
 
 func (d *diverge) handle(w dns.ResponseWriter, req *dns.Msg) {
 	// fmt.Printf("req: %v\n", req)
-	upstream, rcode := d.preChk(req)
-	log.Printf("\tpreChk: %d, %d\n", upstream, rcode)
+	upstream, rcode := preChk(req, d.cache, d.blocked, d.ipMap)
+	log.Printf("\tpreChk: %s, %s\n", decisionToStr(d.names, upstream), dns.RcodeToString[rcode])
 	if rcode != dns.RcodeSuccess {
 		handleWith(w, req, rcode)
 		return
@@ -189,26 +167,7 @@ func (d *diverge) handle(w dns.ResponseWriter, req *dns.Msg) {
 	}
 }
 
-func ptrName4ToUint32(p string) (uint32, bool) {
-	if !dns.IsSubDomain(inAddrArpa, p) {
-		return 0, false
-	}
-	s := strings.SplitN(p, ".", 5)
-	if len(s) != 5 || s[4] != inAddrArpa {
-		return 0, false
-	}
-	var ip uint32
-	for i := 0; i < 4; i++ {
-		a, err := strconv.Atoi(s[3-i])
-		if err != nil {
-			return 0, false
-		}
-		ip = (ip << 8) + uint32(a)
-	}
-	return ip, true
-}
-
-func (d *diverge) preChk(req *dns.Msg) (upstream, rcode int) {
+func preChk(req *dns.Msg, c *cache, b *domainSet, m *ip4map.IP4Map) (upstream, rcode int) {
 	// log.Printf("Query: %v", req)
 	if len(req.Question) != 1 {
 		log.Printf("unexpected len(req.Question): %d\n", len(req.Question))
@@ -229,7 +188,7 @@ func (d *diverge) preChk(req *dns.Msg) (upstream, rcode int) {
 		if !ok {
 			return noDecision, dns.RcodeBadName
 		}
-		ipV := d.ipMap.Get(ip)
+		ipV := m.Get(ip)
 		switch ipV {
 		case ipPrivate:
 			return noDecision, dns.RcodeRefused
@@ -239,22 +198,32 @@ func (d *diverge) preChk(req *dns.Msg) (upstream, rcode int) {
 			return upstreamA + ipV - ipA, dns.RcodeSuccess
 		}
 	}
-	if d.blocked.includes(q.Name) {
+	if b.includes(q.Name) {
 		return noDecision, dns.RcodeRefused
 	}
-	return d.cache.get(q.Name), dns.RcodeSuccess
+	return c.get(q.Name), dns.RcodeSuccess
 }
 
-func (d *diverge) postChk(m *dns.Msg, ipV int) bool {
-
-	for _, rr := range m.Answer {
-		a, ok := rr.(*dns.A)
-		if !ok {
-			continue
-		}
-		if d.ipMap.GetIP(a.A) == ipV {
-			return true
+func filterRR(rrs []dns.RR, m *ip4map.IP4Map, v int) (int, []dns.RR) {
+	filtered := make([]dns.RR, 0, len(rrs))
+	var nA int
+	for _, rr := range rrs {
+		a, typeA := (rr).(*dns.A)
+		if typeA {
+			if m.GetIP(a.A) == v {
+				nA++
+				filtered = append(filtered, rr)
+			}
+		} else {
+			filtered = append(filtered, rr)
 		}
 	}
-	return false
+	return nA, filtered
+}
+
+func postChk(m *dns.Msg, im *ip4map.IP4Map, v int) bool {
+	var nA int
+	nA, m.Answer = filterRR(m.Answer, im, v)
+	_, m.Extra = filterRR(m.Extra, im, v)
+	return nA > 0
 }
