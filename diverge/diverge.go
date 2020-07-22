@@ -28,9 +28,16 @@ func decisionToStr(dec int) string {
 	}
 }
 
-// TODO: fallback and retry
 func exchange(m *dns.Msg, dec int) (r *dns.Msg, rtt time.Duration, err error) {
-	return dnsClient.Exchange(m, upstream[dec-upstreamX][0])
+	for _, addr := range upstream[dec-upstreamX] {
+		r, rtt, err = dnsClient.Exchange(m, addr)
+		if err != nil {
+			continue
+		} else {
+			break
+		}
+	}
+	return
 }
 
 func handleWith(w dns.ResponseWriter, req *dns.Msg, rcode int) {

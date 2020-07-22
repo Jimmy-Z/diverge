@@ -75,7 +75,7 @@ to do
 	- [ ] diagnostic/dump, via HTTP?
 	- [ ] diagnostic/query, via CHAOS?
 - [x] <del>3-way</del> n-way diverge
-- [ ] fallback and retry
+- [x] fallback <del>and retry</del>
 - [x] concurrent query
 
 dependency
