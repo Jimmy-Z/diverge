@@ -76,7 +76,7 @@ to do
 	- [ ] diagnostic/query, via CHAOS?
 - [x] <del>3-way</del> n-way diverge
 - [ ] fallback and retry
-- [ ] concurrent query
+- [x] concurrent query
 
 dependency
 ===

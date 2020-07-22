@@ -49,7 +49,7 @@ func handleBy(w dns.ResponseWriter, req *dns.Msg, dec int) {
 	w.WriteMsg(res)
 }
 
-func handleDivergeTypeA(w dns.ResponseWriter, req *dns.Msg) int {
+func handleDivergeTypeASeq(w dns.ResponseWriter, req *dns.Msg) int {
 	nErr := 0
 	for i := 1; i < len(upstream); i++ {
 		// 1 -> upstreamA
@@ -77,6 +77,57 @@ func handleDivergeTypeA(w dns.ResponseWriter, req *dns.Msg) int {
 		}
 		if nErr == 0 {
 			cacheSave(decisionCache, req, res, upstreamX)
+		}
+		return upstreamX
+	}
+	return noDecision
+}
+
+type response struct {
+	msg *dns.Msg
+	err error
+}
+
+func handleDivergeTypeA(w dns.ResponseWriter, req *dns.Msg) int {
+	rArray := make([]chan response, len(upstream))
+	for i := range upstream {
+		decision := i + upstreamX
+		rArray[i] = make(chan response, 1)
+		func(req dns.Msg, dec int, r chan<- response) {
+			go func(req *dns.Msg, dec int, r chan<- response) {
+				res, _, err := exchange(req, dec)
+				r <- response{res, err}
+				close(r)
+			}(&req, dec, r)
+		}(*req, decision, rArray[i])
+	}
+	nErr := 0
+	for i := 1; i < len(rArray); i++ {
+		decision := i + upstreamX
+		res := <-(rArray[i])
+		if res.err != nil {
+			log.Printf("upstream %s error: %v", decisionToStr(decision), res.err)
+			nErr++
+		} else if postChk(res.msg, i-1+ipA) {
+			if w != nil {
+				w.WriteMsg(res.msg)
+			}
+			if nErr == 0 {
+				cacheSave(decisionCache, req, res.msg, decision)
+			}
+			return decision
+		}
+	}
+	res := <-(rArray[0])
+	if res.err != nil {
+		log.Printf("upstream %s error: %v", decisionToStr(upstreamX), res.err)
+		nErr++
+	} else {
+		if w != nil {
+			w.WriteMsg(res.msg)
+		}
+		if nErr == 0 {
+			cacheSave(decisionCache, req, res.msg, upstreamX)
 		}
 		return upstreamX
 	}
