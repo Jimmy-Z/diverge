@@ -4,10 +4,11 @@ import (
 	"ip4map"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDomainSet(t *testing.T) {
-	ds := newDomainSet([]string{"com.", "net."})
+	ds := newDomainSet("com.", "net.")
 	for _, e := range []struct {
 		d string
 		r bool
@@ -15,7 +16,6 @@ func TestDomainSet(t *testing.T) {
 		{"example.com.", true},
 		{"example.net.", true},
 		{"example.org.", false},
-		{"example.acom.", false},
 		{"example.net.uk.", false},
 	} {
 		r := ds.includes(e.d)
@@ -56,4 +56,13 @@ func TestIPMap(t *testing.T) {
 			t.Errorf("ipMap.Get(\"%s\") = %d, expecting %d", e.ip, r, e.r)
 		}
 	}
+}
+
+func TestRedisCache(t *testing.T) {
+	c := newCache("tcp", ":6379", 3)
+	c.set("test_a", 1, 1*time.Second)
+	t.Log(c.get("test_a"))
+	t.Log(c.get("test_b"))
+	time.Sleep(2 * time.Second)
+	t.Log(c.get("test_a"))
 }

@@ -6,15 +6,21 @@ import "strings"
 
 type domainSet map[string]struct{}
 
-func newDomainSet(domains []string) *domainSet {
+// domains could comma separated
+func newDomainSet(domains ...string) *domainSet {
 	s := &domainSet{}
 	for _, d := range domains {
-		s.append(d)
+		for _, ds := range strings.Split(d, ",") {
+			s.append(ds)
+		}
 	}
 	return s
 }
 
 func (s domainSet) append(d string) {
+	if len(d) == 0 {
+		return
+	}
 	if []byte(d)[len(d)-1] != '.' {
 		d = d + "."
 	}

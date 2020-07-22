@@ -1,6 +1,8 @@
 package main
 
 import (
+	"ip4map"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -10,9 +12,7 @@ import (
 
 const (
 	inAddrARPA = "in-addr.arpa."
-	homeARPA   = "home.arpa."
 	rrTTLUnit  = time.Second
-	minTTL     = 24 * time.Hour
 )
 
 // part of IANA IPv4 special-purpose address registry
@@ -33,10 +33,42 @@ var specialIPv4 = []string{
 	"255.255.255.255/32",
 }
 
-func ttl(rrTTL uint32) time.Duration {
-	ttl := time.Duration(rrTTL) * rrTTLUnit
-	if ttl < minTTL {
-		return minTTL
+func parseUpstream(s string) []string {
+	u := strings.Split(s, ",")
+	for i, a := range u {
+		if !strings.ContainsAny(a, ":") {
+			u[i] = a + ":53"
+		}
+	}
+	return u
+}
+
+func loadIPMap() *ip4map.IP4Map {
+	lenSets := len(ipFiles)
+	var vBits int
+	switch {
+	case lenSets <= (1<<2)-2:
+		vBits = 2
+	case lenSets <= (1<<4)-2:
+		vBits = 4
+	default:
+		log.Fatal("too many IP sets:", lenSets)
+	}
+	newMap := ip4map.New(vBits, 24)
+	for _, s := range specialIPv4 {
+		newMap.SetStr(s, ipPrivate)
+	}
+	for i, fn := range ipFiles {
+		newMap.LoadFile(fn, ipA+i)
+	}
+	return newMap
+}
+
+func ttl(m *dns.Msg) time.Duration {
+	// TODO: maybe not just the TTL of the first answer RR?
+	ttl := time.Duration(m.Answer[0].Header().Ttl) * rrTTLUnit
+	if ttl < *minTTL {
+		return *minTTL
 	}
 	return ttl
 }

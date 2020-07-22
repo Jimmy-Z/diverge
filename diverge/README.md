@@ -63,30 +63,28 @@ details
 * for type `A` queries, the decision strategy described in basic concept is used
 * for other types, do a type `A` query to `upstreamA` first
 * n-way diverge is handled by simply trying `A`, `B`, `C`, ... one by one, if all of them fails, then `X`
-	* plan the order and IP sets carefully
+	* plan the priority order and IP sets carefully
 * there is a blocked domain list for like `lan` and `home.arpa`
 * also a [special IPv4 list][iana-ipv4-special]
 
 to do
 ===
-- [x] diverge cache
-	- [ ] TTL
-		- [ ] auto refresh when TTL is imminent
-	- [ ] non-volatile
+- [x] diverge decision cache
+	- [x] TTL (by Redis)
+	- [x] non-volatile (by Redis)
 	- [ ] diagnostic/dump, via HTTP?
 	- [ ] diagnostic/query, via CHAOS?
-- [*] <del>3-way</del> n-way diverge
+- [x] <del>3-way</del> n-way diverge
 - [ ] fallback and retry
-- [ ] concurrent query,
-	upstreamA/B is usually very fast, sub 10ms fast,
-	and most queries should hit cache,
-	the added complexity will be in vain
+- [ ] concurrent query
 
 dependency
 ===
 * [miekg/dns]
+* [Redigo]
 
 [miekg/dns]: https://github.com/miekg/dns
+[Redigo]: https://github.com/gomodule/redigo
 [AdGuard Home]: https://adguard.com/en/adguard-home/overview.html
 [iana-ipv4-special]: https://www.iana.org/assignments/iana-ipv4-special-registry/iana-ipv4-special-registry.xhtml
 [dnsmasq]: http://www.thekelleys.org.uk/dnsmasq/doc.html
