@@ -152,8 +152,24 @@ func handleDivergeTypeOther(w dns.ResponseWriter, req *dns.Msg) {
 }
 
 func handle(w dns.ResponseWriter, req *dns.Msg) {
+	// log.Printf("Query: %v", req)
+	if len(req.Question) != 1 {
+		log.Printf("unexpected len(req.Question): %d\n", len(req.Question))
+		handleWith(w, req, dns.RcodeRefused)
+		return
+	}
+	q := &req.Question[0]
+	log.Printf("query: %s %s %s\n", q.Name, dns.ClassToString[q.Qclass], dns.TypeToString[q.Qtype])
+	if q.Qclass == dns.ClassCHAOS {
+		handleCHAOS(w, req)
+		return
+	} else if q.Qclass != dns.ClassINET {
+		log.Printf("\tquery class not supported: %s\n", dns.ClassToString[q.Qclass])
+		handleWith(w, req, dns.RcodeNotImplemented)
+		return
+	}
 	// fmt.Printf("req: %v\n", req)
-	upstream, rcode := preChk(req)
+	upstream, rcode := preChk(q)
 	log.Printf("\tpreChk: %s, %s\n", decisionToStr(upstream), dns.RcodeToString[rcode])
 	if rcode != dns.RcodeSuccess {
 		handleWith(w, req, rcode)
@@ -172,18 +188,7 @@ func handle(w dns.ResponseWriter, req *dns.Msg) {
 	}
 }
 
-func preChk(req *dns.Msg) (upstream, rcode int) {
-	// log.Printf("Query: %v", req)
-	if len(req.Question) != 1 {
-		log.Printf("unexpected len(req.Question): %d\n", len(req.Question))
-		return noDecision, dns.RcodeRefused
-	}
-	q := req.Question[0]
-	log.Printf("query: %s %s %s\n", q.Name, dns.ClassToString[q.Qclass], dns.TypeToString[q.Qtype])
-	if q.Qclass != dns.ClassINET {
-		log.Printf("\tquery class not supported: %s\n", dns.ClassToString[q.Qclass])
-		return noDecision, dns.RcodeNotImplemented
-	}
+func preChk(q *dns.Question) (upstream, rcode int) {
 	switch q.Qtype {
 	case dns.TypeANY:
 		log.Print("\tquery type ANY not supported\n")

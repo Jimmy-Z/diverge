@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 type cache interface {
 	set(k string, v int, ttl time.Duration)
 	get(k string) int
+	info() string
 }
 
 func cacheSave(c cache, req, res *dns.Msg, v int) {
@@ -47,6 +49,12 @@ func (mc *mapCache) get(k string) int {
 	mc.l.RLock()
 	defer mc.l.RUnlock()
 	return mc.m[k]
+}
+
+func (mc *mapCache) info() string {
+	mc.l.Lock()
+	defer mc.l.Unlock()
+	return "map: " + strconv.Itoa(len(mc.m)) + " entries"
 }
 
 // redis
@@ -100,4 +108,15 @@ func (rc *redisCache) get(k string) int {
 		return noDecision
 	}
 	return i
+}
+
+func (rc *redisCache) info() string {
+	conn := (*redis.Pool)(rc).Get()
+	defer conn.Close()
+	r, err := redis.Int(conn.Do("DBSIZE"))
+	if err != nil {
+		log.Printf("redis error: %v", err)
+		return "redis: error"
+	}
+	return "redis: " + strconv.Itoa(r) + " entries"
 }

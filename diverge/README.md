@@ -72,8 +72,8 @@ to do
 - [x] diverge decision cache
 	- [x] TTL (by Redis)
 	- [x] non-volatile (by Redis)
+	- [x] diagnostic/query, via CHAOS
 	- [ ] diagnostic/dump, via HTTP?
-	- [ ] diagnostic/query, via CHAOS?
 - [x] <del>3-way</del> n-way diverge
 - [x] fallback <del>and retry</del>
 - [x] concurrent query
