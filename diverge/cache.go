@@ -14,11 +14,26 @@ type cache interface {
 	set(k string, v int, ttl time.Duration)
 	get(k string) int
 	info() string
+	close()
 }
 
 func cacheSave(c cache, req, res *dns.Msg, v int) {
 	k := req.Question[0].Name
-	ex := ttl(res)
+	// ttl in DNS is uint31, so this is an impossible value to reach
+	ttl := ^uint32(0)
+	for _, rr := range res.Answer {
+		hdr := rr.Header()
+		if hdr.Rrtype == dns.TypeA && hdr.Ttl < ttl {
+			ttl = hdr.Ttl
+		}
+	}
+	if ttl == ^uint32(0) {
+		return
+	}
+	ex := time.Duration(ttl) * rrTTLUnit
+	if ex < *minTTL {
+		ex = *minTTL
+	}
 	go c.set(k, v, ex)
 }
 
@@ -29,7 +44,7 @@ func newCache(network, address string, index int) cache {
 	return newRedisCache(network, address, index)
 }
 
-// a in memory only cache, be aware TTL is ignored
+// simple cache for debug only, be aware TTL is ignored
 type mapCache struct {
 	m map[string]int
 	l *sync.RWMutex
@@ -56,6 +71,8 @@ func (mc *mapCache) info() string {
 	defer mc.l.Unlock()
 	return "map: " + strconv.Itoa(len(mc.m)) + " entries"
 }
+
+func (mc *mapCache) close() {}
 
 // redis
 type redisCache redis.Pool
@@ -119,4 +136,10 @@ func (rc *redisCache) info() string {
 		return "redis: error"
 	}
 	return "redis: " + strconv.Itoa(r) + " entries"
+}
+
+func (rc *redisCache) close() {
+	if err := (*redis.Pool)(rc).Close(); err != nil {
+		log.Printf("redis error: %v", err)
+	}
 }

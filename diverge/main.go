@@ -2,12 +2,10 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"ip4map"
 	"log"
-	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/miekg/dns"
@@ -15,11 +13,13 @@ import (
 
 var (
 	listen = flag.String("listen", "127.0.0.1:53",
-		"listen on [address]:[port], [address]: can be omitted, which defaults to 127.0.0.1")
+		"[address]:[port] or [port]")
 	minTTL = flag.Duration("minTTL", 48*time.Hour,
 		"minimum TTL for entries in cache")
 	redisAddress = flag.String("redis", "",
-		"address of redis server, to cache diverge choices, if not specified, a simple in memory cache is used, be aware in this mode TTL is indefinite")
+		"address of redis server, to cache diverge decisions\n"+
+			"\ta simple in memory cache is used if omitted\n"+
+			"\tbe aware in this mode TTL is indefinite")
 	redisNetwork = flag.String("redis-network", "unix",
 		"redis network, for example \"tcp\"")
 	redisIndex = flag.Int("redis-index", 0,
@@ -57,20 +57,27 @@ func main() {
 		upstream = append(upstream, parseUpstream(flag.Arg(i+1)))
 		ipFiles = append(ipFiles, flag.Arg(i+2))
 	}
+	fmt.Printf("configured with %d upstreams:\n", len(names))
+	for i, name := range names {
+		fmt.Printf("\t%s: %s\n", name, strings.Join(upstream[i], " "))
+	}
 
 	decisionCache = newCache(*redisNetwork, *redisAddress, *redisIndex)
+	fmt.Println(decisionCache.info())
+
 	block = newDomainSet(*flagBlock)
 	ipMap = loadIPMap()
 
+	dnsd := &dns.Server{Addr: *listen, Net: "udp", Handler: dns.HandlerFunc(handle)}
 	go func() {
-		d := &dns.Server{Addr: *listen, Net: "udp", Handler: dns.HandlerFunc(handle)}
-		if err := d.ListenAndServe(); err != nil {
+		if err := dnsd.ListenAndServe(); err != nil {
 			log.Fatalf("%v\n", err)
 		}
 	}()
 
-	sig := make(chan os.Signal)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	s := <-sig
-	log.Fatalf("Signal (%v) received, stopping\n", s)
+	processSignal()
+
+	log.Print("quiting")
+	dnsd.Shutdown()
+	decisionCache.close()
 }

@@ -64,15 +64,6 @@ func loadIPMap() *ip4map.IP4Map {
 	return newMap
 }
 
-func ttl(m *dns.Msg) time.Duration {
-	// TODO: maybe not just the TTL of the first answer RR?
-	ttl := time.Duration(m.Answer[0].Header().Ttl) * rrTTLUnit
-	if ttl < *minTTL {
-		return *minTTL
-	}
-	return ttl
-}
-
 func ptrName4ToUint32(p string) (uint32, bool) {
 	if !dns.IsSubDomain(inAddrARPA, p) {
 		return 0, false
