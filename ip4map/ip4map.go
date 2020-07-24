@@ -136,16 +136,18 @@ func (m *IP4Map) SetStr(s string, v int) {
 	m.Set(n, l, v)
 }
 
-func (m *IP4Map) LoadList(lst io.Reader, v int) error {
+func (m *IP4Map) LoadList(lst io.Reader, v int) (int, error) {
 	s := bufio.NewScanner(lst)
+	lines := 0
 	for s.Scan() {
 		l := s.Text()
 		if len(l) == 0 || l[0] == '#' {
 			continue
 		}
 		m.SetStr(l, v)
+		lines++
 	}
-	return s.Err()
+	return lines, s.Err()
 }
 
 func (m *IP4Map) LoadFile(fn string, v int) {
@@ -155,9 +157,11 @@ func (m *IP4Map) LoadFile(fn string, v int) {
 		log.Println(err)
 		return
 	}
-	err = m.LoadList(f, v)
+	lines, err := m.LoadList(f, v)
 	if err != nil {
 		log.Println("error loading", fn, err)
+	} else {
+		log.Printf("%d lines loaded from %s", lines, fn)
 	}
 }
 

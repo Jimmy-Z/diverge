@@ -35,7 +35,7 @@ var (
 	upstream      = [][]string{}
 	ipFiles       = []string{}
 	ipMap         *ip4map.IP4Map
-	dnsClient     = &dns.Client{}
+	// dnsClient     = &dns.Client{}
 )
 
 func main() {

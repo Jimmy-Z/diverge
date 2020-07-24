@@ -29,8 +29,9 @@ func decisionToStr(dec int) string {
 }
 
 func exchange(m *dns.Msg, dec int) (r *dns.Msg, rtt time.Duration, err error) {
+	client := &dns.Client{}
 	for _, addr := range upstream[dec-upstreamX] {
-		r, rtt, err = dnsClient.Exchange(m, addr)
+		r, rtt, err = client.Exchange(m, addr)
 		if err != nil {
 			continue
 		} else {
@@ -118,12 +119,12 @@ func handleDivergeTypeA(w dns.ResponseWriter, req *dns.Msg) int {
 	}
 	nErr := 0
 	for i, r := range rArray[1:] {
-		decision := i + upstreamX
+		decision := i + upstreamA
 		res := <-r
 		if res.err != nil {
 			log.Printf("\tupstream %s error: %v", decisionToStr(decision), res.err)
 			nErr++
-		} else if postChk(res.msg, i-1+ipA) {
+		} else if postChk(res.msg, i+ipA) {
 			finalDecision(w, req, res.msg, decision, nErr)
 			return decision
 		}
