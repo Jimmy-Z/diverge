@@ -95,47 +95,45 @@ type response struct {
 	err error
 }
 
+func finalDecision(w dns.ResponseWriter, req, res *dns.Msg, decision, nErr int) {
+	if w != nil {
+		w.WriteMsg(res)
+	}
+	if nErr == 0 {
+		cacheSave(decisionCache, req, res, decision)
+	}
+	log.Printf("\tdecision %s: %s", req.Question[0].Name, decisionToStr(decision))
+}
+
 func handleDivergeTypeA(w dns.ResponseWriter, req *dns.Msg) int {
 	rArray := make([]chan response, len(upstream))
 	for i := range upstream {
 		decision := i + upstreamX
 		rArray[i] = make(chan response, 1)
-		func(req dns.Msg, dec int, r chan<- response) {
-			go func(req *dns.Msg, dec int, r chan<- response) {
-				res, _, err := exchange(req, dec)
-				r <- response{res, err}
-				close(r)
-			}(&req, dec, r)
+		go func(req dns.Msg, dec int, r chan<- response) {
+			res, _, err := exchange(&req, dec)
+			r <- response{res, err}
+			close(r)
 		}(*req, decision, rArray[i])
 	}
 	nErr := 0
-	for i := 1; i < len(rArray); i++ {
+	for i, r := range rArray[1:] {
 		decision := i + upstreamX
-		res := <-(rArray[i])
+		res := <-r
 		if res.err != nil {
-			log.Printf("upstream %s error: %v", decisionToStr(decision), res.err)
+			log.Printf("\tupstream %s error: %v", decisionToStr(decision), res.err)
 			nErr++
 		} else if postChk(res.msg, i-1+ipA) {
-			if w != nil {
-				w.WriteMsg(res.msg)
-			}
-			if nErr == 0 {
-				cacheSave(decisionCache, req, res.msg, decision)
-			}
+			finalDecision(w, req, res.msg, decision, nErr)
 			return decision
 		}
 	}
 	res := <-(rArray[0])
 	if res.err != nil {
-		log.Printf("upstream %s error: %v", decisionToStr(upstreamX), res.err)
+		log.Printf("\tupstream %s error: %v", decisionToStr(upstreamX), res.err)
 		nErr++
 	} else {
-		if w != nil {
-			w.WriteMsg(res.msg)
-		}
-		if nErr == 0 {
-			cacheSave(decisionCache, req, res.msg, upstreamX)
-		}
+		finalDecision(w, req, res.msg, upstreamX, nErr)
 		return upstreamX
 	}
 	return noDecision
@@ -170,7 +168,7 @@ func handle(w dns.ResponseWriter, req *dns.Msg) {
 	}
 	// fmt.Printf("req: %v\n", req)
 	upstream, rcode := preChk(q)
-	log.Printf("\tpreChk: %s, %s\n", decisionToStr(upstream), dns.RcodeToString[rcode])
+	log.Printf("\tpreChk %s: %s, %s\n", q.Name, decisionToStr(upstream), dns.RcodeToString[rcode])
 	if rcode != dns.RcodeSuccess {
 		handleWith(w, req, rcode)
 		return
@@ -219,9 +217,8 @@ func filterRR(rrs []dns.RR, v int) (int, []dns.RR) {
 	filtered := make([]dns.RR, 0, len(rrs))
 	var nA int
 	for _, rr := range rrs {
-		a, typeA := (rr).(*dns.A)
-		if typeA {
-			if ipMap.GetIP(a.A) == v {
+		if rr.Header().Rrtype == dns.TypeA {
+			if ipMap.GetIP(rr.(*dns.A).A) == v {
 				nA++
 				filtered = append(filtered, rr)
 			}

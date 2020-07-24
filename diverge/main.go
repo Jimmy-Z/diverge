@@ -68,6 +68,8 @@ func main() {
 	block = newDomainSet(*flagBlock)
 	ipMap = loadIPMap()
 
+	fmt.Printf("listen on %s\n", *listen)
+	// from the looks of the call stack, no need to wrap handler func in another go routine
 	dnsd := &dns.Server{Addr: *listen, Net: "udp", Handler: dns.HandlerFunc(handle)}
 	go func() {
 		if err := dnsd.ListenAndServe(); err != nil {

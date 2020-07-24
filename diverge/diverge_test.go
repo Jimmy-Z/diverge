@@ -66,3 +66,15 @@ func TestRedisCache(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	t.Log(c.get("test_a"))
 }
+
+func TestGo(t *testing.T) {
+	delayedPrint := func(m, i int, p *int) {
+		time.Sleep(time.Second)
+		t.Log(m, i, *p)
+	}
+	for i := 0; i < 5; i++ {
+		// it looks like the parameters are enumerated before routine start
+		go delayedPrint(i*3, i, &i)
+	}
+	time.Sleep(2 * time.Second)
+}

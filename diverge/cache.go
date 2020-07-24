@@ -116,7 +116,7 @@ func (rc *redisCache) get(k string) int {
 		return noDecision
 	}
 	if r == nil {
-		log.Printf("cache miss: %s", k)
+		// log.Printf("cache miss: %s", k)
 		return noDecision
 	}
 	i, err := redis.Int(r, nil)

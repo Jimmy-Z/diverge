@@ -47,9 +47,9 @@ func loadIPMap() *ip4map.IP4Map {
 	lenSets := len(ipFiles)
 	var vBits int
 	switch {
-	case lenSets <= (1<<2)-2:
+	case lenSets <= (1<<2)-3: // it's -3 instead of -2 since ipPrivate took another spot
 		vBits = 2
-	case lenSets <= (1<<4)-2:
+	case lenSets <= (1<<4)-3:
 		vBits = 4
 	default:
 		log.Fatal("too many IP sets:", lenSets)
