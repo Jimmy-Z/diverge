@@ -28,6 +28,18 @@ func decisionToStr(dec int) string {
 	}
 }
 
+func ip4ToStr(ip uint32) string {
+	v := ipMap.Get(ip)
+	switch v {
+	case ipUnknown:
+		return decisionToStr(upstreamX)
+	case ipPrivate:
+		return "special"
+	default:
+		return decisionToStr(upstreamA + v - ipA)
+	}
+}
+
 func exchange(m *dns.Msg, dec int) (r *dns.Msg, rtt time.Duration, err error) {
 	client := &dns.Client{}
 	for _, addr := range upstream[dec-upstreamX] {
@@ -169,11 +181,12 @@ func handle(w dns.ResponseWriter, req *dns.Msg) {
 	}
 	// fmt.Printf("req: %v\n", req)
 	upstream, rcode := preChk(q)
-	log.Printf("\tpreChk %s: %s, %s\n", q.Name, decisionToStr(upstream), dns.RcodeToString[rcode])
 	if rcode != dns.RcodeSuccess {
+		log.Printf("\tpreChk %s: %s\n", q.Name, dns.RcodeToString[rcode])
 		handleWith(w, req, rcode)
 		return
 	}
+	log.Printf("\tpreChk %s: %s\n", q.Name, decisionToStr(upstream))
 	switch upstream {
 	case noDecision:
 		switch req.Question[0].Qtype {
