@@ -16,6 +16,8 @@ var (
 		"[address]:[port] or [port]")
 	minTTL = flag.Duration("minTTL", 48*time.Hour,
 		"minimum TTL for entries in cache")
+	UDPSize = flag.Uint("udp-size",512,
+		"maximum UDP size of non-EDNS upstream query")
 	redisAddress = flag.String("redis", "",
 		"address of redis server, to cache diverge decisions\n"+
 			"\ta simple in memory cache is used if omitted\n"+
