@@ -1,9 +1,9 @@
 package main
 
 import (
+	"diverge/ip4map"
 	"flag"
 	"fmt"
-	"ip4map"
 	"log"
 	"strings"
 	"time"

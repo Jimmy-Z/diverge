@@ -1,4 +1,8 @@
 
+example (or designed) usage
+===
+[potato-routing]
+
 situation
 ===
 * for certain network environment
@@ -15,25 +19,12 @@ basic concept (for 2-way diverge)
 * if answer matches `ipA`, use it
 * else query from `upstreamX` instead
 
-example usage
-===
-* [dnsmasq] listening on `127.0.0.1:1053` for local/lan/DHCP resolve
-* diverge listening on `127.0.0.1:1054` for public resolve
-* in [AdGuard Home], setup upstream like this:
-	```
-	[//]127.0.0.1:1053
-	[/lan/home.arpa/]127.0.0.1:1053
-	[/168.192.in-addr.arpa/]127.0.0.1:1053
-	127.0.0.1:1054
-	```
-
 other solutions
 ===
 * domain list based solution
 	* like [felixonmars/dnsmasq-china-list]
 	* these are usually poorly maintained
-		* not to criticize the maintainer but the nature of such projects,
-		just imagine the sheer amount of man power required
+		* not to criticize the maintainer but the nature of such projects.
 	* for false positive matches, answers come from `upstreamA` but not in `ipA`
 		* or false negative matches, answers will come from `upstreamX` but in `ipA`
 		* this usually results in poor performance since the widely usage of CDN
@@ -49,13 +40,14 @@ other solutions
 		* forked from overture
 		* not to be confused with [pymumu/smartdns]
 
-comparison
+designing choices
 ===
 diverge is meant to be an intermediate layer between [AdGuard Home] and public DNS servers
-* since the GUI of [AdGuard Home] is quite useful,
-but most probably they will not merge this particular feature
-* so cache is not required, or even opposed upon since it will introduce two layers of cache
-* diverge decision cache
+* since the GUI of AdGuard Home is quite useful,
+but most probably they will not merge this particular feature.
+	* and obviously we wouldn't want to implement that again.
+* also no DNS cache since AdGuard Home already had one.
+* diverge decision is cached.
 
 details
 ===
@@ -77,12 +69,16 @@ to do
 - [x] <del>3-way</del> n-way diverge
 - [x] fallback <del>and retry</del>
 - [x] concurrent query
+- [ ] bogus NXDOMAIN (like in dnsmasq)
+- [ ] DoT/DoH support
+- [ ] port to Rust, or Deno?
 
 dependency
 ===
 * [miekg/dns]
 * [Redigo]
 
+[potato-routing]: https://github.com/Jimmy-Z/potato-routing
 [miekg/dns]: https://github.com/miekg/dns
 [Redigo]: https://github.com/gomodule/redigo
 [AdGuard Home]: https://adguard.com/en/adguard-home/overview.html

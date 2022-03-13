@@ -1,7 +1,7 @@
 package main
 
 import (
-	"ip4map"
+	"diverge/ip4map"
 	"log"
 	"strconv"
 	"strings"
