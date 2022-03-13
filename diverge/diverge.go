@@ -42,6 +42,7 @@ func ip4ToStr(ip uint32) string {
 
 func exchange(m *dns.Msg, dec int) (r *dns.Msg, rtt time.Duration, err error) {
 	client := &dns.Client{}
+	client.UDPSize = uint16(*UDPSize)
 	for _, addr := range upstream[dec-upstreamX] {
 		r, rtt, err = client.Exchange(m, addr)
 		if err != nil {
