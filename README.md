@@ -1,3 +1,4 @@
+2024-12-11: deprecated in favor of [diverge-rs](https://github.com/Jimmy-Z/diverge-rs), a rust rewrite.
 
 example (or designed) usage
 ===
